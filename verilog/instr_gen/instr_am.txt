@@ -1,0 +1,11 @@
+reset 0 0 0
+wcfg  0 x x
+wfad  0 x x
+wfad  2 x x
+wfad  4 x x
+wfad  6 x x
+wacc  0 0-7 0-15
+matrix 0 x x
+racc  0 0-7 0-15
+//relu  0 x 0-7
+...
