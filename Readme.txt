@@ -13,3 +13,7 @@
     注:N指代整数1,2,3…
 
 详情见./spec/CNN-HWPE_spec_v1.1.6.pdf
+
+Author: Hao Chen , Qiang Chen
+ Email: chenhaocxjtu@163.com
+        chenqiang5233@hotmail.com
