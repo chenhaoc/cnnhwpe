@@ -1,18 +1,17 @@
-目标
-    用于CNN硬件加速的协处理器，挂在RISCV指令集的蜂鸟E200 MCU的EAI接口上。
-    蜂鸟E200: https://github.com/SI-RISCV/e200_opensource
+Objective
+    A hardware coprocessor for CNN acceleration based on RISC-V instructions set, which is linked with Hummingbird E200 MCU through extension accelerator interface (EAI).
 
-特点
-    支持Kernel的RS维度大小最大11×11
-    输入层卷积kernel：C=3
-    中间层卷积kernel：Int8 C=8N，Exp4 C=16N，Ter2 C=32N
-    每周期完成16个乘积操作，乘积的操作数是64bit
-    支持INT8，EXP4（指数scale的4bit），Ter2(Ternary2)
-    CNN的卷积运算通过im2col+矩阵乘积实现
+    Hummingbird E200: https://github.com/SI-RISCV/e200_opensource
 
-    注:N指代整数1,2,3…
+Features
+    • Support Convolution layer and ReLU layer
+    • Transform convolution into matrix multiplication (im2col on the fly)
+    • Kernel size from 3×3 to 11×11
+    • Support data type INT8，UINT8, EXP4 (4 bits of exponential scale) and Ternary
+    • 16 dot-product operations of 64-bit operands (8 INT8, 16 EXP4 or 32 Ternary) per cycle
+    • PE utilization is 100% for internal layers. For the input layers, the utilization is 82.5%(11×11×3),87.5%(7×7×3),93.75%(5×5×3),84.375%(3×3×3).
 
-详情见./spec/CNN-HWPE_spec_v1.1.6.pdf
+Please see ./spec/CNN-HWPE_spec_v1.1.6.pdf for more details
 
 Author: Hao Chen , Qiang Chen
  Email: chenhaocxjtu@163.com
