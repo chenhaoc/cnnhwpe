@@ -5,14 +5,8 @@
 #include <memory.h>
 #include <limits.h>
 // choose one cfg file and run
-//#include ".\\case_define\\inter_layer_3_8b.h"
-//#include ".\\case_define\\inter_layer_3_4b.h"
-//#include ".\\case_define\\inter_layer_3_2b.h"
-#include ".\\case_define\\input_layer_3.h"
-//#include ".\\case_define\\input_layer_5.h"
-//#include ".\\case_define\\input_layer_7.h"
-//#include ".\\case_define\\input_layer_9.h"
-//#include ".\\case_define\\input_layer_11.h"
+//#include ".\\case_gen_str2\\conv_featuremap_8b\\inter_layer_8b.h"
+#include ".\\case_gen_str2\\conv_input_5\\input_layer_5_8b.h"
 
 using namespace std;
 
@@ -94,7 +88,7 @@ int main() {
     const uint8_t  Data_type  =   D_Data_type  ; //2 bit used, 1/2/3=2bit/4bit/8bit
     const bool     Layer_type =   D_Layer_type  ; // 1 input layer
     const bool     Kernel_333 =   D_Kernel_333  ; // 1 kernel=3*3*3
-    const uint8_t  AccReg_shift=  D_AccReg_shift ; //5 bit used, <24
+    const uint8_t  AccReg_shift=  24;//D_AccReg_shift ; //5 bit used, <24
 // Conv Config
     const uint16_t H = D_H;
     const uint16_t W = D_W;
@@ -105,6 +99,9 @@ int main() {
     char kernel_file_path[]= D_kernel_file_path;
     char conv_file_path[]  = D_conv_file_path;
 
+    const uint16_t overlap = Kernel_size-STRIDE;
+    uint16_t H_333 = H+overlap;//overlaped rows added
+    uint16_t W_input = W+Kernel_size-STRIDE;//overlaped columns added
     assert(Data_type>=1 && Data_type<=3);
     assert(AccReg_shift<=24);
 
@@ -112,16 +109,16 @@ int main() {
     // FmapAddrBase[8] are the first address of each part.
     //        kernel_333=0         kernel_333=1, just 4 addr are needed
     //   -----------------------       -----------------------
-    //   |0         |4         |       |0         |1         |
+    //   |0         |1         |       |0         |1         |
     //   |          |          |       |          |          |
     //   -----------------------       -----------------------
-    //   |1         |5         |       |2         |3         |
+    //   |2         |3         |       |2         |3         |
     //   |          |          |       |          |          |
     //   -----------------------       -----------------------
-    //   |2         |6         |       |          |          |
+    //   |4         |5         |       |          |          |
     //   |          |          |       |          |          |
     //   -----------------------       -----------------------
-    //   |3         |7         |       |          |          |
+    //   |6         |7         |       |          |          |
     //   |          |          |       |          |          |
     //   -----------------------       -----------------------
 
@@ -146,9 +143,9 @@ int main() {
     const uint16_t H_count  = ((H-Kernel_size)/STRIDE+1)/4 ;
     const uint16_t W_count  = ((W-Kernel_size)/STRIDE+1)/2 ;
     const uint16_t H_stride = Kernel_333 ? 2*STRIDE*C*N/8 : STRIDE*C*N/8;
-    const uint16_t W_stride = Kernel_333 ? (H+1)*C*STRIDE*N/8 : H*C*STRIDE*N/8 ;
+    const uint16_t W_stride = Kernel_333 ? H_333*C*STRIDE*N/8 : H*C*STRIDE*N/8 ;
     const uint16_t Conv_CH_count = Kernel_333 ? 3 : Layer_type ? uint16_t(C*Kernel_size*N/64)+1 : C*Kernel_size*N/64;
-    const uint16_t Conv_W_offset = Kernel_333 ? 2*C*H*N/8 : C*H*N/8;
+    const uint16_t Conv_W_offset = Kernel_333 ? C*H_333*N/8 : C*H*N/8;
 
     uint64_t *MemFmap;  //input feature map
     uint64_t *MemKernel;//input weight kernel
@@ -160,6 +157,7 @@ int main() {
     static int32_t outfmap_r[2*W_count][4*H_count][16*K_count];//1 dimension output from AccReg_round,
     static int32_t outfmap_cmp[uint32_t(H_count*W_count*K_count*8*16)];
 
+
     // Read in feature map memory file
     FILE *MemFmap_file;
     if ((MemFmap_file = fopen(fmap_file_path,"rb")) == NULL) {
@@ -168,14 +166,20 @@ int main() {
     }
     fseek(MemFmap_file, 0L, SEEK_END); //set cursor to ending of file
     uint32_t fmap_len = ftell(MemFmap_file);
-    if(Kernel_333==0)
+    if(Layer_type==0) //inter layer
         assert(fmap_len==H*W*C*N/8);
-    else
-        assert(fmap_len==(H+1)*W*C*N/8);
+    else if(Kernel_333==0) //non3x3 input layer
+        assert(fmap_len==H*W_input*C*N/8);
+    else //3x3 input layer
+        assert(fmap_len==H_333*W_input*C*N/8);
     rewind(MemFmap_file); //set cursor to beginning of file
-    MemFmap = new uint64_t[fmap_len/8];
+    int memfmap_len = fmap_len%8>0 ? fmap_len/8+1 : fmap_len/8; //fmap_len may not be multiple of 8
+    MemFmap = new uint64_t[memfmap_len];
     int x=fread(MemFmap,8,fmap_len/8,MemFmap_file);
     assert(x==fmap_len/8);
+    if(fmap_len%8>0) {//load remain bytes
+        fread(MemFmap+fmap_len/8,fmap_len%8,1,MemFmap_file);
+    }
     cout << " From file : " << fmap_file_path << endl;
     cout << "\t" << x << " 64-bit FeatureMap data read in..." << endl;
 
@@ -218,19 +222,29 @@ int main() {
 
 
     uint32_t FmapAddrBase_333[8]= {
-        0, uint32_t(W_count*W_stride), uint32_t(H_count*H_stride),
-        uint32_t(W_count*W_stride+H_count*H_stride), 0,0,0,0
+        0, uint32_t(W_count*W_stride+overlap*Conv_W_offset),
+        uint32_t(H_count*H_stride),
+        uint32_t(W_count*W_stride+overlap*Conv_W_offset+H_count*H_stride),
+        0,0,0,0
     };
-    uint32_t FmapAddrBase_n333[8] = {
-        0, uint32_t(H_count*H_stride),
-        uint32_t(2*H_count*H_stride), uint32_t(3*H_count*H_stride),
-        uint32_t(W_count*W_stride), uint32_t(W_count*W_stride+H_count*H_stride),
-        uint32_t(W_count*W_stride+2*H_count*H_stride), uint32_t(W_count*W_stride+3*H_count*H_stride)
+    uint32_t FmapAddrBase_input[8] = {
+        0, uint32_t(W_count*W_stride+overlap*Conv_W_offset),
+        uint32_t(H_count*H_stride), uint32_t(W_count*W_stride+overlap*Conv_W_offset+H_count*H_stride),
+        uint32_t(2*H_count*H_stride), uint32_t(W_count*W_stride+overlap*Conv_W_offset+2*H_count*H_stride),
+        uint32_t(3*H_count*H_stride), uint32_t(W_count*W_stride+overlap*Conv_W_offset+3*H_count*H_stride)
     };
-    if(Kernel_333)
-        FmapAddrBase = FmapAddrBase_333;
+    uint32_t FmapAddrBase_inter[8] = {
+        0, uint32_t(W_count*W_stride),
+        uint32_t(H_count*H_stride), uint32_t(W_count*W_stride+H_count*H_stride),
+        uint32_t(2*H_count*H_stride), uint32_t(W_count*W_stride+2*H_count*H_stride),
+        uint32_t(3*H_count*H_stride), uint32_t(W_count*W_stride+3*H_count*H_stride)
+    };
+    if(Layer_type==0)
+        FmapAddrBase = FmapAddrBase_inter;
+    else if(Kernel_333==0)
+        FmapAddrBase = FmapAddrBase_input;
     else
-        FmapAddrBase = FmapAddrBase_n333;
+        FmapAddrBase = FmapAddrBase_333;
 
     KernelSramAddr=0;
     uint32_t round_cnt = Kernel_333 ? 4 : Conv_CH_count*Kernel_size;//round cnt when completing 128 output point
@@ -265,7 +279,7 @@ int main() {
                             for(int i=0; i<4; i++) {
                                 uint64_t pe_lm1 = MemFmap[FmapSramAddr[i]>>3];
                                 uint64_t tmp0 = (pe_lm1 >> (FmapSramAddr[i]%8)*8) &0xFFFF; //get 2bytes from sramaddr
-                                FmapSramAddr[i] = FmapConvAddr[i]+3*(H+1);//1row was overlaped
+                                FmapSramAddr[i] = FmapConvAddr[i]+3*H_333;//1row was overlaped
                                 uint64_t pe_lm2 = MemFmap[(FmapSramAddr[i]>>3)];
                                 uint64_t pe_lm3 = MemFmap[(FmapSramAddr[i]>>3)+1];
                                 uint64_t pe_lm4 = MemFmap[(FmapSramAddr[i]>>3)+2];
@@ -285,7 +299,7 @@ int main() {
                                 uint64_t pe_lm2 = MemFmap[(FmapSramAddr[i]>>3)+1];
                                 uint32_t bit_addr = 8*(FmapSramAddr[i] % 8);//from bit_addr, get 4bytes
                                 uint64_t tmp0 = get_non_aligned_64bit(pe_lm1,pe_lm2,bit_addr) &0xFFFFFFFF;
-                                FmapSramAddr[i] = FmapConvAddr[i]+3*(H+1)*2;
+                                FmapSramAddr[i] = FmapConvAddr[i]+3*H_333*2;
                                 uint64_t pe_lm3 = MemFmap[FmapSramAddr[i]>>3];
                                 uint64_t pe_lm4 = MemFmap[(FmapSramAddr[i]>>3)+1];
                                 bit_addr = 8*(FmapSramAddr[i] % 8);//from bit_addr, get 8bytes
@@ -444,11 +458,13 @@ int main() {
                 } else { // when intput kernel isn't 3*3*3
                     for(int row=0; row<8; row++) {
                         for(int pe=0; pe<16; pe++) {
-                            uint32_t out_w = row>3 ? countW + W_count : countW;
-                            uint32_t out_h = countH + (row%4)*H_count;
+                            uint32_t out_w = countW + (row%2)*W_count;
+                            uint32_t out_h = countH + (row/2)*H_count;
                             uint32_t out_k = 16*countK + pe;
                             outfmap_w[out_w][out_h][out_k] = AccReg[row][pe];
                             uint32_t idx = out_w*H_count*K_count*4*16+out_h*K_count*16+out_k;//k->h->w
+                            if(idx==1119648)
+                                int a = 1;
                             outfmap_cmp[idx] = AccReg[row][pe];
                         }
                     }
@@ -470,16 +486,16 @@ int main() {
         for(int wi=0; wi<2*W_count; wi++) {
             for(int hi=0; hi<4*H_count ; hi++) {
                 for(int ki=0; ki<16*K_count; ki++) {
-                    uint32_t part_idx = uint32_t(hi/H_count) + 4*uint32_t(wi/W_count); //which part of 8part
+                    uint32_t part_idx = 2*uint32_t(hi/H_count) + uint32_t(wi/W_count); //which part of 8part
                     uint32_t pe_idx = ki%16;              //which pe
-                    uint32_t h_part_count = hi - (part_idx%4)*H_count;    //countH in its part
-                    uint32_t w_part_count = part_idx>3 ? wi-W_count : wi; //countW in its part
+                    uint32_t h_part_count = hi - (part_idx/2)*H_count;    //countH in its part
+                    uint32_t w_part_count = wi-W_count*(part_idx%2); //countW in its part
                     uint32_t round_idx = uint32_t(ki/16)*H_count*W_count + w_part_count*H_count + h_part_count;
                     outfmap_r[wi][hi][ki] = AccReg_round[round_idx][part_idx][pe_idx];
                 }
             }
         }
-        int cmp1 = memcmp(outfmap_w,outfmap_r,H_count*W_count*K_count*8*16*4);
+        int cmp1 = memcmp(outfmap_w,outfmap_r,outfmap_len);//outfmap_len=4*(H_count*W_count*K_count*8*16)
         if(cmp1!=0) {
             cout << "Attention! the two output feature map are not consistent!!!" << endl;
         } else {
@@ -487,7 +503,7 @@ int main() {
         }
     };
 
-    int cmp2 = memcmp(outfmap_cmp,OutFmap,outfmap_len/4); //should be 0 if a==b
+    int cmp2 = memcmp(outfmap_cmp,OutFmap,outfmap_len); //should be 0 if a==b
     cout << "\n-----------------------------------------------------" << endl;
     if(cmp2!=0) {
         cout << "Attention! the output feature map are not right!!!" << endl;
@@ -495,9 +511,12 @@ int main() {
         for(int i=0; i<outfmap_len/4; i++) {
             if(OutFmap[i]!=outfmap_cmp[i]) {
                 error_cnt++;
+                if(error_cnt<10)
+                    cout << i <<" ";
             }
         }
-        cout <<"error_cnt=" << error_cnt << endl;
+        cout << endl <<"error_cnt=" << error_cnt << endl;
+        cout << OutFmap[1119648] <<endl<< outfmap_cmp[1119648]<<endl;
     } else {
         cout << "----------- Correct!    Congratulations! ------------" << endl;
     }
