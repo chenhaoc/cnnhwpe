@@ -11,7 +11,7 @@ Features
     • 16 dot-product operations of 64-bit operands (8 INT8, 16 EXP4 or 32 Ternary) per cycle
     • PE utilization is 100% for internal layers. For the input layers, the utilization is 82.5%(11×11×3),87.5%(7×7×3),93.75%(5×5×3),84.375%(3×3×3).
 
-Please see ./spec/CNN-HWPE_spec_v1.1.6.pdf for more details
+Please see ./spec/CNN-HWPE_SPEC_EN.pdf for more details
 
 Author: Hao Chen , Qiang Chen
  Email: chenhaocxjtu@163.com
